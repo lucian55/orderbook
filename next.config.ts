@@ -13,7 +13,7 @@ const nextConfig: NextConfig = {
     return [
       {
         source: '/btse-api/:path*',
-        destination: 'https://api.btse.com/futures/api/v2.1/:path*',
+        destination: 'https://api.btse.com/spot/api/v3.2/:path*',
       },
     ]
   },

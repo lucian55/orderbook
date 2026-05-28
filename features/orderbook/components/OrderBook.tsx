@@ -1,10 +1,9 @@
 'use client'
 
-import { useState } from 'react'
+import { startTransition, useEffect, useState } from 'react'
 import { useDocumentTitle } from '@/shared/hooks/useDocumentTitle'
 import { formatPrice } from '@/shared/utils/formatNumber'
 import { useOrderBook } from '../hooks/useOrderBook'
-import { useLastPrice } from '../hooks/useLastPrice'
 import { SIDE, WS_STATUS } from '../types'
 import Header from './Header'
 import SideList from './SideList'
@@ -26,16 +25,26 @@ export default function OrderBook() {
 function OrderBookInner() {
   const [tickSize, setTickSize] = useState<TickSize>(DEFAULT_TICK_SIZE)
   const { bids, asks, prevBids, prevAsks, isLoading, wsStatus } = useOrderBook(tickSize)
-  const { lastPrice, prevLastPrice } = useLastPrice()
 
-  // 把最新价格同步到浏览器 tab 标题，方便切走后仍可监盘
+  // 无独立成交价 WS，从买一/卖一计算中间价
+  // bids 降序 → bids[0] 最优买价；asks 降序 → asks[asks.length-1] 最优卖价
+  const midPrice =
+    bids.length > 0 && asks.length > 0 ? (bids[0].price + asks[asks.length - 1].price) / 2 : null
+
+  const [prevMidPrice, setPrevMidPrice] = useState<number | null>(null)
+  useEffect(() => {
+    startTransition(() => setPrevMidPrice(midPrice))
+  }, [midPrice])
+
   const arrow =
-    lastPrice !== null && prevLastPrice !== null
-      ? lastPrice > prevLastPrice ? '↑ ' : lastPrice < prevLastPrice ? '↓ ' : ''
+    midPrice !== null && prevMidPrice !== null
+      ? midPrice > prevMidPrice
+        ? '↑ '
+        : midPrice < prevMidPrice
+          ? '↓ '
+          : ''
       : ''
-  const title = lastPrice !== null
-    ? `${arrow}${formatPrice(lastPrice)} BTCPFC`
-    : 'OrderBook'
+  const title = midPrice !== null ? `${arrow}${formatPrice(midPrice)} BTC-USDT` : 'OrderBook'
   useDocumentTitle(title)
 
   // 有历史数据时不显示错误态（REST 兜底已接管），无数据时才显示
@@ -74,8 +83,8 @@ function OrderBookInner() {
         <>
           <Header />
           <SideList quotes={asks} prevQuotes={prevAsks} side={SIDE.SELL} tickSize={tickSize} />
-          <LastPrice lastPrice={lastPrice} prevLastPrice={prevLastPrice} />
-          <SideList quotes={bids} prevQuotes={prevBids} side={SIDE.BUY}  tickSize={tickSize} />
+          <LastPrice lastPrice={midPrice} prevLastPrice={prevMidPrice} />
+          <SideList quotes={bids} prevQuotes={prevBids} side={SIDE.BUY} tickSize={tickSize} />
         </>
       )}
     </div>

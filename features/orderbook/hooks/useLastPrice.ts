@@ -23,7 +23,7 @@ export function useLastPrice() {
   const [prevLastPrice, setPrevLastPrice] = useState<number | null>(null)
   const [restEnabled, setRestEnabled] = useState(false)
 
-  const lastMsgTimeRef = useRef<number>(Date.now())
+  const lastMsgTimeRef = useRef<number>(0)
   const lastResubscribeTimeRef = useRef<number>(0) // 上次主动重订阅的时间，冷却控制
   const pendingPriceRef = useRef<number | null>(null) // RAF 期间暂存最新价格，丢弃中间帧
   const rafIdRef = useRef<number | null>(null)
@@ -77,7 +77,6 @@ export function useLastPrice() {
         rafIdRef.current = null
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [client])
 
   // 30s 无消息则启用 REST 轮询并尝试重连

@@ -2,11 +2,12 @@
  * 将数字格式化为带千位分隔符的字符串，保留原始小数位。
  * 例：1234567.89 → "1,234,567.89"
  */
-export function formatWithCommas(num: number | string): string {
+export function formatWithCommas(num: number | string, decimals?: number): string {
   const n = typeof num === 'string' ? parseFloat(num) : num
   if (isNaN(n)) return String(num)
 
-  const parts = n.toString().split('.')
+  const str = decimals !== undefined ? n.toFixed(decimals) : n.toString()
+  const parts = str.split('.')
   parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',')
   return parts.join('.')
 }

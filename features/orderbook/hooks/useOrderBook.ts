@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { startTransition, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { fetchOrderBook } from '@/api/btse'
 import { getBtseOrderBookClient } from '../websocket/BtseOrderBookClient'
@@ -34,7 +34,9 @@ export function useOrderBook(tickSize: TickSize = DEFAULT_TICK_SIZE): UseOrderBo
 
   // tickSize 写入 ref，避免 flushToState 因依赖变化而重新创建
   const tickSizeRef = useRef<TickSize>(tickSize)
-  tickSizeRef.current = tickSize
+  useLayoutEffect(() => {
+    tickSizeRef.current = tickSize
+  }, [tickSize])
 
   const [bids, setBids] = useState<Quote[]>([])
   const [asks, setAsks] = useState<Quote[]>([])
@@ -47,23 +49,24 @@ export function useOrderBook(tickSize: TickSize = DEFAULT_TICK_SIZE): UseOrderBo
 
   const lastSeqNumRef = useRef<number>(-1) // 上一条消息的 seqNum，用于校验连续性
   const awaitingSnapshotRef = useRef<boolean>(false) // 断层恢复中：等待新 snapshot 期间丢弃所有 delta
-  const lastMsgTimeRef = useRef<number>(Date.now()) // 最后一次收到消息的时间，用于超时检测
+  const lastMsgTimeRef = useRef<number>(0) // 最后一次收到消息的时间，用于超时检测
   const lastResubscribeTimeRef = useRef<number>(0) // 上次主动重订阅的时间，用于冷却控制
   const timerRef = useRef<number | null>(null) // flush 节流定时器
   const wsStatusRef = useRef<WsHealthStatus>(WS_STATUS.CONNECTING) // wsStatus 的 ref 镜像，供非 render 上下文读取
+
+  const [prevBids, setPrevBids] = useState<Quote[]>([])
+  const [prevAsks, setPrevAsks] = useState<Quote[]>([])
 
   // bids/asks 的 ref 镜像，用于在 flushToState 中同步读取"上一帧"数据
   // 不能直接用 state，因为 setState 是异步的，读取时可能拿到旧值
   const bidsStateRef = useRef<Quote[]>([])
   const asksStateRef = useRef<Quote[]>([])
-  const prevBidsRef = useRef<Quote[]>([])
-  const prevAsksRef = useRef<Quote[]>([])
 
   /**
    * 将当前 Map 计算为 Quote 数组并推送到 React state。
    * @param fromSnapshot 为 true 时清空 prev，不触发动画（snapshot 是全量数据，不应视为"新价格"）
    */
-  const flushToState = useCallback((fromSnapshot = false) => {
+  const flushToState = useCallback((fromSnapshot = false, clearLoading = false) => {
     const tick = tickSizeRef.current
     const newBids = computeQuotes(bidsMapRef.current, 'buy', tick)
     const newAsks = computeQuotes(asksMapRef.current, 'sell', tick)
@@ -77,12 +80,12 @@ export function useOrderBook(tickSize: TickSize = DEFAULT_TICK_SIZE): UseOrderBo
 
     if (fromSnapshot) {
       // snapshot 时清空 prev，避免所有行都被标记为"新价格"触发动画
-      prevBidsRef.current = []
-      prevAsksRef.current = []
+      setPrevBids([])
+      setPrevAsks([])
     } else {
       // delta 时先保存当前值为 prev，再更新；顺序不能颠倒
-      prevBidsRef.current = bidsStateRef.current
-      prevAsksRef.current = asksStateRef.current
+      setPrevBids(bidsStateRef.current)
+      setPrevAsks(asksStateRef.current)
     }
 
     bidsStateRef.current = newBids
@@ -90,6 +93,7 @@ export function useOrderBook(tickSize: TickSize = DEFAULT_TICK_SIZE): UseOrderBo
 
     setBids(newBids)
     setAsks(newAsks)
+    if (clearLoading) setIsLoading(false)
   }, [])
 
   /**
@@ -141,8 +145,7 @@ export function useOrderBook(tickSize: TickSize = DEFAULT_TICK_SIZE): UseOrderBo
           wsStatusRef.current = WS_STATUS.HEALTHY
           setWsStatus(WS_STATUS.HEALTHY)
         }
-        setIsLoading(false)
-        flushToState(true) // snapshot 不触发动画
+        flushToState(true, true) // snapshot 不触发动画，同时清除 loading
         return
       }
 
@@ -253,15 +256,14 @@ export function useOrderBook(tickSize: TickSize = DEFAULT_TICK_SIZE): UseOrderBo
     }
     bidsMapRef.current = newBidsMap
     asksMapRef.current = newAsksMap
-    setIsLoading(false)
-    flushToState(true) // REST 全量数据，同样不触发动画
+    startTransition(() => flushToState(true, true)) // REST 全量数据，同样不触发动画
   }, [fallbackQuery.data, wsStatus, flushToState])
 
   return {
     bids,
     asks,
-    prevBids: prevBidsRef.current,
-    prevAsks: prevAsksRef.current,
+    prevBids,
+    prevAsks,
     isLoading,
     wsStatus,
   }
