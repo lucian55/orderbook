@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest'
-import { applyDelta, aggregateByTick, computeQuotes, visibleQuotesEqual } from '@/features/orderbook/utils/orderBookUtils'
+import {
+  applyDelta,
+  aggregateByTick,
+  computeQuotes,
+  visibleQuotesEqual,
+} from '@/features/orderbook/utils/orderBookUtils'
 import { SIDE } from '@/features/orderbook/types'
 
 // ─── applyDelta ──────────────────────────────────────────────────────────────
@@ -19,7 +24,10 @@ describe('applyDelta', () => {
   })
 
   it('deletes entries when size is 0', () => {
-    const book = new Map([[100, 10], [200, 20]])
+    const book = new Map([
+      [100, 10],
+      [200, 20],
+    ])
     const result = applyDelta(book, [['100', '0']])
     expect(result.has(100)).toBe(false)
     expect(result.get(200)).toBe(20)
@@ -45,8 +53,15 @@ describe('applyDelta', () => {
   })
 
   it('processes multiple changes in one delta', () => {
-    const book = new Map([[100, 10], [200, 20]])
-    const result = applyDelta(book, [['100', '0'], ['200', '30'], ['300', '5']])
+    const book = new Map([
+      [100, 10],
+      [200, 20],
+    ])
+    const result = applyDelta(book, [
+      ['100', '0'],
+      ['200', '30'],
+      ['300', '5'],
+    ])
     expect(result.has(100)).toBe(false)
     expect(result.get(200)).toBe(30)
     expect(result.get(300)).toBe(5)
@@ -62,13 +77,21 @@ describe('computeQuotes', () => {
   })
 
   it('sorts prices in descending order regardless of insertion order', () => {
-    const book = new Map([[100, 5], [300, 3], [200, 8]])
+    const book = new Map([
+      [100, 5],
+      [300, 3],
+      [200, 8],
+    ])
     const result = computeQuotes(book, SIDE.BUY)
     expect(result.map(q => q.price)).toEqual([300, 200, 100])
   })
 
   it('filters out entries with size <= 0', () => {
-    const book = new Map([[100, 5], [200, 0], [300, -1]])
+    const book = new Map([
+      [100, 5],
+      [200, 0],
+      [300, -1],
+    ])
     const result = computeQuotes(book, SIDE.BUY)
     expect(result).toHaveLength(1)
     expect(result[0].price).toBe(100)
@@ -76,13 +99,17 @@ describe('computeQuotes', () => {
 
   describe('buy side', () => {
     // 买盘：从最高价向下累计，最低价的 total 最大（maxTotal）
-    const book = new Map([[100, 5], [200, 3], [300, 2]])
+    const book = new Map([
+      [100, 5],
+      [200, 3],
+      [300, 2],
+    ])
 
     it('cumulates total from highest price downward', () => {
       const result = computeQuotes(book, SIDE.BUY)
-      expect(result[0]).toMatchObject({ price: 300, total: 2 })   // 仅自身
-      expect(result[1]).toMatchObject({ price: 200, total: 5 })   // 2+3
-      expect(result[2]).toMatchObject({ price: 100, total: 10 })  // 2+3+5
+      expect(result[0]).toMatchObject({ price: 300, total: 2 }) // 仅自身
+      expect(result[1]).toMatchObject({ price: 200, total: 5 }) // 2+3
+      expect(result[2]).toMatchObject({ price: 100, total: 10 }) // 2+3+5
     })
 
     it('last element has totalPercent = 1', () => {
@@ -92,21 +119,25 @@ describe('computeQuotes', () => {
 
     it('calculates intermediate totalPercent correctly', () => {
       const result = computeQuotes(book, SIDE.BUY)
-      expect(result[0].totalPercent).toBeCloseTo(0.2)  // 2/10
-      expect(result[1].totalPercent).toBeCloseTo(0.5)  // 5/10
+      expect(result[0].totalPercent).toBeCloseTo(0.2) // 2/10
+      expect(result[1].totalPercent).toBeCloseTo(0.5) // 5/10
     })
   })
 
   describe('sell side', () => {
     // 卖盘：从最低价向上累计，最高价的 total 最大（maxTotal）
-    const book = new Map([[100, 5], [200, 3], [300, 2]])
+    const book = new Map([
+      [100, 5],
+      [200, 3],
+      [300, 2],
+    ])
 
     it('cumulates total from lowest price upward', () => {
       const result = computeQuotes(book, SIDE.SELL)
       // 数组降序：index 0=300, 1=200, 2=100
-      expect(result[0]).toMatchObject({ price: 300, total: 10 })  // 5+3+2
-      expect(result[1]).toMatchObject({ price: 200, total: 8 })   // 5+3
-      expect(result[2]).toMatchObject({ price: 100, total: 5 })   // 仅自身
+      expect(result[0]).toMatchObject({ price: 300, total: 10 }) // 5+3+2
+      expect(result[1]).toMatchObject({ price: 200, total: 8 }) // 5+3
+      expect(result[2]).toMatchObject({ price: 100, total: 5 }) // 仅自身
     })
 
     it('first element has totalPercent = 1', () => {
@@ -116,8 +147,8 @@ describe('computeQuotes', () => {
 
     it('calculates intermediate totalPercent correctly', () => {
       const result = computeQuotes(book, SIDE.SELL)
-      expect(result[1].totalPercent).toBeCloseTo(0.8)  // 8/10
-      expect(result[2].totalPercent).toBeCloseTo(0.5)  // 5/10
+      expect(result[1].totalPercent).toBeCloseTo(0.8) // 8/10
+      expect(result[2].totalPercent).toBeCloseTo(0.5) // 5/10
     })
   })
 })
@@ -160,10 +191,10 @@ describe('aggregateByTick', () => {
   it('handles fractional tick sizes (0.5)', () => {
     // tick=0.5: buy 向下到最近 0.5 倍数
     const book = new Map([
-      [100.1, 1],  // → 100.0
-      [100.3, 2],  // → 100.0
-      [100.6, 3],  // → 100.5
-      [100.9, 4],  // → 100.5
+      [100.1, 1], // → 100.0
+      [100.3, 2], // → 100.0
+      [100.6, 3], // → 100.5
+      [100.9, 4], // → 100.5
     ])
     const result = aggregateByTick(book, 0.5, SIDE.BUY)
     expect(result.get(100.0)).toBe(3)
@@ -175,6 +206,18 @@ describe('aggregateByTick', () => {
     aggregateByTick(book, 1, SIDE.BUY)
     expect(book.get(100.3)).toBe(1)
     expect(book.size).toBe(1)
+  })
+
+  it('keeps on-tick prices in their own bucket despite float division noise', () => {
+    // 73540.7 / 0.1 = 735406.9999999999，未校正时 floor 会错配到 73540.6
+    const buy = aggregateByTick(new Map([[73540.7, 1]]), 0.1, SIDE.BUY)
+    expect(buy.get(73540.7)).toBe(1)
+    expect(buy.has(73540.6)).toBe(false)
+
+    // 卖盘对称：整 tick 价格不应被 ceil 顶到上一档
+    const sell = aggregateByTick(new Map([[73540.7, 1]]), 0.1, SIDE.SELL)
+    expect(sell.get(73540.7)).toBe(1)
+    expect(sell.has(73540.8)).toBe(false)
   })
 })
 
@@ -206,7 +249,10 @@ describe('computeQuotes with tickSize', () => {
   })
 
   it('tickSize=0 returns ungrouped result (backwards compatible)', () => {
-    const book = new Map([[100, 1], [200, 2]])
+    const book = new Map([
+      [100, 1],
+      [200, 2],
+    ])
     const result = computeQuotes(book, SIDE.BUY)
     expect(result.map(q => q.price)).toEqual([200, 100])
   })
@@ -216,7 +262,10 @@ describe('computeQuotes with tickSize', () => {
 
 describe('visibleQuotesEqual', () => {
   const q = (price: number, size: number, totalPercent = 0) => ({
-    price, size, total: 0, totalPercent,
+    price,
+    size,
+    total: 0,
+    totalPercent,
   })
 
   it('returns true for identical arrays', () => {
@@ -262,7 +311,7 @@ describe('visibleQuotesEqual', () => {
 
   it('sell: detects change in the visible last 8 entries', () => {
     const base = Array.from({ length: 10 }, (_, i) => q(100 - i, 10))
-    const other = [...base.slice(0, 9), q(90, 999)]  // 最后一条 size 不同
+    const other = [...base.slice(0, 9), q(90, 999)] // 最后一条 size 不同
     expect(visibleQuotesEqual(base, other, SIDE.SELL)).toBe(false)
   })
 })

@@ -18,10 +18,11 @@ export function aggregateByTick(
   if (!(tickSize > 0)) return book
   const result = new Map<number, number>()
   for (const [price, size] of book) {
-    const factor = price / tickSize
-    const bucketRaw = side === SIDE.BUY
-      ? Math.floor(factor) * tickSize
-      : Math.ceil(factor)  * tickSize
+    // 浮点除法会产生噪声（如 73540.7/0.1 = 735406.9999999999），
+    // 若直接 floor/ceil 会把整 tick 价格错配到相邻桶。先把 factor 校正回整数。
+    const factor = Math.round((price / tickSize) * 1e8) / 1e8
+    const bucketRaw =
+      side === SIDE.BUY ? Math.floor(factor) * tickSize : Math.ceil(factor) * tickSize
     // 浮点累计误差校正：tick 通常为 0.1/0.5/1/5，1e8 精度足够覆盖
     const key = Math.round(bucketRaw * 1e8) / 1e8
     result.set(key, (result.get(key) ?? 0) + size)
@@ -42,7 +43,8 @@ export function visibleQuotesEqual(prev: Quote[], next: Quote[], side: Side): bo
   const nextVis = side === SIDE.BUY ? next.slice(0, n) : next.slice(-n)
   if (prevVis.length !== nextVis.length) return false
   for (let i = 0; i < prevVis.length; i++) {
-    const p = prevVis[i], q = nextVis[i]
+    const p = prevVis[i],
+      q = nextVis[i]
     if (p.price !== q.price || p.size !== q.size || p.totalPercent !== q.totalPercent) {
       return false
     }
@@ -61,7 +63,7 @@ export function applyDelta(
   const next = new Map(book)
   for (const [priceStr, sizeStr] of delta) {
     const price = parseFloat(priceStr)
-    const size  = parseFloat(sizeStr)
+    const size = parseFloat(sizeStr)
     if (size === 0) {
       next.delete(price)
     } else {
@@ -81,11 +83,7 @@ export function applyDelta(
  *
  * totalPercent = 当前 total / maxTotal，用于绘制百分比条。
  */
-export function computeQuotes(
-  book: Map<number, number>,
-  side: Side,
-  tickSize = 0
-): Quote[] {
+export function computeQuotes(book: Map<number, number>, side: Side, tickSize = 0): Quote[] {
   // tickSize > 0 时先按 tick 聚合，再计算累计量
   const source = tickSize > 0 ? aggregateByTick(book, tickSize, side) : book
   // 过滤掉 size <= 0 的异常档位，统一降序排列
@@ -94,7 +92,10 @@ export function computeQuotes(
     .sort((a, b) => b[0] - a[0])
 
   const result: Quote[] = entries.map(([price, size]) => ({
-    price, size, total: 0, totalPercent: 0,
+    price,
+    size,
+    total: 0,
+    totalPercent: 0,
   }))
 
   let runningTotal = 0
@@ -115,9 +116,8 @@ export function computeQuotes(
 
   // 累加结束后 maxTotal 位置固定：买盘在末尾，卖盘在首位
   // 直接读取而非 Math.max(…map)，O(1) vs O(n)
-  const maxTotal = result.length > 0
-    ? (side === SIDE.BUY ? result[result.length - 1].total : result[0].total)
-    : 0
+  const maxTotal =
+    result.length > 0 ? (side === SIDE.BUY ? result[result.length - 1].total : result[0].total) : 0
 
   for (const q of result) {
     q.totalPercent = maxTotal > 0 ? q.total / maxTotal : 0
