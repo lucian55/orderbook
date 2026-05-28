@@ -6,7 +6,8 @@ export function formatWithCommas(num: number | string, decimals?: number): strin
   const n = typeof num === 'string' ? parseFloat(num) : num
   if (isNaN(n)) return String(num)
 
-  const str = decimals !== undefined ? n.toFixed(decimals) : n.toString()
+  const str =
+    decimals !== undefined ? n.toFixed(decimals) : typeof num === 'string' ? num : n.toString()
   const parts = str.split('.')
   parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',')
   return parts.join('.')
