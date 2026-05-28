@@ -1,6 +1,6 @@
-const RECONNECT_INTERVAL = 3_000   // 断线后等 3s 重连，避免立即重连打爆服务器
-const MAX_RECONNECT = 10           // 最多重试 10 次，防止无限循环
-const HEARTBEAT_INTERVAL = 5_000   // BTSE 服务端 ~9s 无消息会主动断开，5s ping 保活
+const RECONNECT_INTERVAL = 3_000 // 断线后等 3s 重连，避免立即重连打爆服务器
+const MAX_RECONNECT = 10 // 最多重试 10 次，防止无限循环
+const HEARTBEAT_INTERVAL = 5_000 // BTSE 服务端 ~9s 无消息会主动断开，5s ping 保活
 
 export interface BtseWsConfig<T> {
   url: string
@@ -22,7 +22,7 @@ export class BtseWsClient<T> {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null
   private reconnectAttempts = 0
-  private isManualClose = false  // 区分主动关闭和意外断线，防止主动关闭触发重连
+  private isManualClose = false // 区分主动关闭和意外断线，防止主动关闭触发重连
   private readonly config: BtseWsConfig<T>
 
   constructor(config: BtseWsConfig<T>) {
@@ -31,10 +31,8 @@ export class BtseWsClient<T> {
 
   /** 建立 WebSocket 连接并注册事件处理器 */
   private connect() {
-    if (
-      this.ws?.readyState === WebSocket.OPEN ||
-      this.ws?.readyState === WebSocket.CONNECTING
-    ) return
+    if (this.ws?.readyState === WebSocket.OPEN || this.ws?.readyState === WebSocket.CONNECTING)
+      return
 
     this.ws = new WebSocket(this.config.url)
 
@@ -131,6 +129,16 @@ export class BtseWsClient<T> {
     this.isManualClose = false
     this.reconnectAttempts = 0
     this.connect()
+  }
+
+  /**
+   * 软重订阅：在当前连接上重发 unsubscribe + subscribe，触发服务端重推 snapshot，
+   * 但不断开 WebSocket。用于 seqNum 断层等正常恢复场景，避免不必要的重连。
+   * 若连接当前不可用，send 会被静默忽略；连接恢复后 onopen 会自动重新 subscribe。
+   */
+  softResubscribe() {
+    this.send({ op: 'unsubscribe', args: this.config.subscribeArgs })
+    this.send({ op: 'subscribe', args: this.config.subscribeArgs })
   }
 
   close() {

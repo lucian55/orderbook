@@ -8,12 +8,13 @@ import { applyDelta, computeQuotes, visibleQuotesEqual } from '../utils/orderBoo
 import { OrderBookMessage, Quote, WsHealthStatus, WS_STATUS, MSG_TYPE } from '../types'
 import { DEFAULT_TICK_SIZE, type TickSize } from '../constants'
 
-const RESUBSCRIBE_COOLDOWN = 5_000   // 两次主动重订阅之间的最小间隔，防止频繁重连
-const MSG_TIMEOUT_MS       = 30_000  // 超过 30s 没有收到消息认为 WS 已超时
-const CHECK_INTERVAL_MS    = 10_000  // 每 10s 检查一次消息时间戳
-const FALLBACK_INTERVAL_MS = 3_000   // WS 超时后 REST 轮询间隔
-const FLUSH_THROTTLE_MS    = 150     // 合并高频 delta 更新，150ms 内只触发一次 render；
-                                     // 略大于 FLASH_DURATION（100ms），确保动画有足够时间完成
+const RESUBSCRIBE_COOLDOWN = 5_000 // 两次完整重连之间的最小间隔，防止频繁断连
+const MSG_TIMEOUT_MS = 30_000 // 超过 30s 没有收到消息认为 WS 已超时
+const CHECK_INTERVAL_MS = 10_000 // 每 10s 检查一次消息时间戳
+const FALLBACK_INTERVAL_MS = 3_000 // WS 超时后 REST 轮询间隔
+const FLUSH_THROTTLE_MS = 150 // 合并高频 delta 更新，150ms 内只触发一次 render；
+// 略大于 FLASH_DURATION（100ms），确保动画有足够时间完成
+const STALE_MSG_MS = 10_000 // 切回前台/网络恢复时，超过此时长无盘口消息才主动重连
 
 // React Query 缓存 key，集中定义避免拼写错误
 const FALLBACK_QUERY_KEY = ['orderBookFallback']
@@ -44,18 +45,19 @@ export function useOrderBook(tickSize: TickSize = DEFAULT_TICK_SIZE): UseOrderBo
   const bidsMapRef = useRef<Map<number, number>>(new Map())
   const asksMapRef = useRef<Map<number, number>>(new Map())
 
-  const lastSeqNumRef           = useRef<number>(-1)                       // 上一条消息的 seqNum，用于校验连续性
-  const lastMsgTimeRef          = useRef<number>(Date.now())                // 最后一次收到消息的时间，用于超时检测
-  const lastResubscribeTimeRef  = useRef<number>(0)                        // 上次主动重订阅的时间，用于冷却控制
-  const timerRef                = useRef<number | null>(null)               // flush 节流定时器
-  const wsStatusRef             = useRef<WsHealthStatus>(WS_STATUS.CONNECTING) // wsStatus 的 ref 镜像，供非 render 上下文读取
+  const lastSeqNumRef = useRef<number>(-1) // 上一条消息的 seqNum，用于校验连续性
+  const awaitingSnapshotRef = useRef<boolean>(false) // 断层恢复中：等待新 snapshot 期间丢弃所有 delta
+  const lastMsgTimeRef = useRef<number>(Date.now()) // 最后一次收到消息的时间，用于超时检测
+  const lastResubscribeTimeRef = useRef<number>(0) // 上次主动重订阅的时间，用于冷却控制
+  const timerRef = useRef<number | null>(null) // flush 节流定时器
+  const wsStatusRef = useRef<WsHealthStatus>(WS_STATUS.CONNECTING) // wsStatus 的 ref 镜像，供非 render 上下文读取
 
   // bids/asks 的 ref 镜像，用于在 flushToState 中同步读取"上一帧"数据
   // 不能直接用 state，因为 setState 是异步的，读取时可能拿到旧值
   const bidsStateRef = useRef<Quote[]>([])
   const asksStateRef = useRef<Quote[]>([])
-  const prevBidsRef  = useRef<Quote[]>([])
-  const prevAsksRef  = useRef<Quote[]>([])
+  const prevBidsRef = useRef<Quote[]>([])
+  const prevAsksRef = useRef<Quote[]>([])
 
   /**
    * 将当前 Map 计算为 Quote 数组并推送到 React state。
@@ -63,7 +65,7 @@ export function useOrderBook(tickSize: TickSize = DEFAULT_TICK_SIZE): UseOrderBo
    */
   const flushToState = useCallback((fromSnapshot = false) => {
     const tick = tickSizeRef.current
-    const newBids = computeQuotes(bidsMapRef.current, 'buy',  tick)
+    const newBids = computeQuotes(bidsMapRef.current, 'buy', tick)
     const newAsks = computeQuotes(asksMapRef.current, 'sell', tick)
 
     const bidsChanged = !visibleQuotesEqual(bidsStateRef.current, newBids, 'buy')
@@ -116,7 +118,6 @@ export function useOrderBook(tickSize: TickSize = DEFAULT_TICK_SIZE): UseOrderBo
   // 处理 WS 消息：snapshot 重置盘口，delta 增量更新
   useEffect(() => {
     const handleMessage = (msg: OrderBookMessage) => {
-      lastMsgTimeRef.current = Date.now()
       const { type, seqNum, prevSeqNum, bids: bidsDelta, asks: asksDelta } = msg.data
 
       if (type === MSG_TYPE.SNAPSHOT) {
@@ -134,20 +135,30 @@ export function useOrderBook(tickSize: TickSize = DEFAULT_TICK_SIZE): UseOrderBo
         bidsMapRef.current = newBidsMap
         asksMapRef.current = newAsksMap
         lastSeqNumRef.current = seqNum
+        awaitingSnapshotRef.current = false // 新 snapshot 到达，恢复完成，重新接受 delta
+        lastMsgTimeRef.current = Date.now()
         if (wsStatusRef.current !== WS_STATUS.HEALTHY) {
           wsStatusRef.current = WS_STATUS.HEALTHY
           setWsStatus(WS_STATUS.HEALTHY)
         }
         setIsLoading(false)
-        flushToState(true)  // snapshot 不触发动画
+        flushToState(true) // snapshot 不触发动画
         return
       }
 
-      // delta：校验 seqNum 连续性，断层则重新订阅获取新 snapshot
+      // 断层恢复期间丢弃所有 delta，不刷新 lastMsgTime：
+      // 若 snapshot 迟迟不来，30s 超时会兜底触发完整重连
+      if (awaitingSnapshotRef.current) return
+
+      // delta：校验 seqNum 连续性。断层时在同一连接上重订阅（不断开 WS），
+      // 由服务端重推 snapshot，期间用 awaitingSnapshotRef 屏障丢弃后续 delta
       if (prevSeqNum !== lastSeqNumRef.current) {
-        safeResubscribe()
+        awaitingSnapshotRef.current = true
+        client.softResubscribe()
         return
       }
+
+      lastMsgTimeRef.current = Date.now()
       lastSeqNumRef.current = seqNum
       bidsMapRef.current = applyDelta(bidsMapRef.current, bidsDelta)
       asksMapRef.current = applyDelta(asksMapRef.current, asksDelta)
@@ -184,10 +195,13 @@ export function useOrderBook(tickSize: TickSize = DEFAULT_TICK_SIZE): UseOrderBo
     return () => clearInterval(timer)
   }, [safeResubscribe])
 
-  // 页面从后台切回前台时重新订阅，确保数据新鲜
+  // 切回前台时：仅当消息已超过 STALE_MSG_MS 不新鲜才重连，健康连接保持不动
   useEffect(() => {
     const handleVisibility = () => {
-      if (document.visibilityState === 'visible') {
+      if (
+        document.visibilityState === 'visible' &&
+        Date.now() - lastMsgTimeRef.current > STALE_MSG_MS
+      ) {
         safeResubscribe()
         queryClient.invalidateQueries({ queryKey: FALLBACK_QUERY_KEY })
       }
@@ -196,11 +210,13 @@ export function useOrderBook(tickSize: TickSize = DEFAULT_TICK_SIZE): UseOrderBo
     return () => document.removeEventListener('visibilitychange', handleVisibility)
   }, [safeResubscribe, queryClient])
 
-  // 网络恢复时重新订阅
+  // 网络恢复时：同样以消息新鲜度为准，避免拆掉仍在正常工作的连接
   useEffect(() => {
     const handleOnline = () => {
-      safeResubscribe()
-      queryClient.invalidateQueries({ queryKey: FALLBACK_QUERY_KEY })
+      if (Date.now() - lastMsgTimeRef.current > STALE_MSG_MS) {
+        safeResubscribe()
+        queryClient.invalidateQueries({ queryKey: FALLBACK_QUERY_KEY })
+      }
     }
     window.addEventListener('online', handleOnline)
     return () => window.removeEventListener('online', handleOnline)
@@ -238,7 +254,7 @@ export function useOrderBook(tickSize: TickSize = DEFAULT_TICK_SIZE): UseOrderBo
     bidsMapRef.current = newBidsMap
     asksMapRef.current = newAsksMap
     setIsLoading(false)
-    flushToState(true)  // REST 全量数据，同样不触发动画
+    flushToState(true) // REST 全量数据，同样不触发动画
   }, [fallbackQuery.data, wsStatus, flushToState])
 
   return {
