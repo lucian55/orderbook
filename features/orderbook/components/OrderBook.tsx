@@ -1,5 +1,6 @@
 'use client'
 
+import Decimal from 'decimal.js'
 import { startTransition, useEffect, useState } from 'react'
 import { useDocumentTitle } from '@/shared/hooks/useDocumentTitle'
 import { formatPrice } from '@/shared/utils/formatNumber'
@@ -29,7 +30,12 @@ function OrderBookInner() {
   // 无独立成交价 WS，从买一/卖一计算中间价
   // bids 降序 → bids[0] 最优买价；asks 降序 → asks[asks.length-1] 最优卖价
   const midPrice =
-    bids.length > 0 && asks.length > 0 ? (bids[0].price + asks[asks.length - 1].price) / 2 : null
+    bids.length > 0 && asks.length > 0
+      ? new Decimal(bids[0].price)
+          .plus(asks[asks.length - 1].price)
+          .div(2)
+          .toNumber()
+      : null
 
   const [prevMidPrice, setPrevMidPrice] = useState<number | null>(null)
   useEffect(() => {

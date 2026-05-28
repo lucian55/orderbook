@@ -1,3 +1,5 @@
+import Decimal from 'decimal.js'
+
 /**
  * 将数字格式化为带千位分隔符的字符串，保留原始小数位。
  * 例：1234567.89 → "1,234,567.89"
@@ -6,8 +8,13 @@ export function formatWithCommas(num: number | string, decimals?: number): strin
   const n = typeof num === 'string' ? parseFloat(num) : num
   if (isNaN(n)) return String(num)
 
+  // 用 Decimal.toFixed 做舍入，规避 JS 原生 (1.005).toFixed(2)==="1.00" 的误差
   const str =
-    decimals !== undefined ? n.toFixed(decimals) : typeof num === 'string' ? num : n.toString()
+    decimals !== undefined
+      ? new Decimal(n).toFixed(decimals)
+      : typeof num === 'string'
+        ? num
+        : n.toString()
   const parts = str.split('.')
   parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',')
   return parts.join('.')
@@ -19,7 +26,7 @@ export function formatWithCommas(num: number | string, decimals?: number): strin
  * 例：formatPrice(75000) → "75,000.0"，formatPrice(75000.5) → "75,000.5"
  */
 export function formatPrice(price: number, decimals = 1): string {
-  return formatWithCommas(price.toFixed(decimals))
+  return formatWithCommas(new Decimal(price).toFixed(decimals))
 }
 
 /**

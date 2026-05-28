@@ -11,6 +11,7 @@ type Handler = (msg: OrderBookMessage) => void
 const fakeClient = {
   handlers: new Set<Handler>(),
   resubscribeCount: 0,
+  softResubscribeCount: 0,
   subscribe(h: Handler) {
     this.handlers.add(h)
     return () => this.handlers.delete(h)
@@ -18,12 +19,16 @@ const fakeClient = {
   resubscribe() {
     this.resubscribeCount++
   },
+  softResubscribe() {
+    this.softResubscribeCount++
+  },
   emit(msg: OrderBookMessage) {
     this.handlers.forEach(h => h(msg))
   },
   reset() {
     this.handlers.clear()
     this.resubscribeCount = 0
+    this.softResubscribeCount = 0
   },
 }
 
@@ -51,14 +56,23 @@ function makeWrapper() {
   }
 }
 
-function snapshot(seqNum: number, bids: [string, string][], asks: [string, string][]): OrderBookMessage {
+function snapshot(
+  seqNum: number,
+  bids: [string, string][],
+  asks: [string, string][]
+): OrderBookMessage {
   return {
     topic: 'update:BTCPFC',
     data: { type: MSG_TYPE.SNAPSHOT, seqNum, prevSeqNum: 0, symbol: 'BTCPFC', bids, asks },
   }
 }
 
-function delta(seqNum: number, prevSeqNum: number, bids: [string, string][], asks: [string, string][]): OrderBookMessage {
+function delta(
+  seqNum: number,
+  prevSeqNum: number,
+  bids: [string, string][],
+  asks: [string, string][]
+): OrderBookMessage {
   return {
     topic: 'update:BTCPFC',
     data: { type: MSG_TYPE.DELTA, seqNum, prevSeqNum, symbol: 'BTCPFC', bids, asks },
@@ -146,12 +160,12 @@ describe('useOrderBook', () => {
       await vi.advanceTimersByTimeAsync(200)
     })
 
-    expect(fakeClient.resubscribeCount).toBe(1)
+    expect(fakeClient.softResubscribeCount).toBe(1)
     // 错位的 delta 不应被应用
     expect(result.current.bids).toBe(bidsBefore)
   })
 
-  it('resubscribe is rate-limited within cooldown window', async () => {
+  it('awaitingSnapshot barrier collapses repeated gaps into one resubscribe', async () => {
     vi.useFakeTimers()
     renderHook(() => useOrderBook(), { wrapper: makeWrapper() })
 
@@ -166,17 +180,21 @@ describe('useOrderBook', () => {
       fakeClient.emit(delta(102, 99, [], []))
     })
 
-    // 5s 冷却期内只允许一次重订阅
-    expect(fakeClient.resubscribeCount).toBe(1)
+    // 首次断层置 awaitingSnapshot 屏障，后续 delta 在 seqNum 校验前即被丢弃，
+    // 因此整段断层只触发一次 softResubscribe
+    expect(fakeClient.softResubscribeCount).toBe(1)
   })
 
-  it('flush throttling: multiple deltas within 150ms cause one render', async () => {
+  it('flush coalescing: multiple deltas within one frame cause one render', async () => {
     vi.useFakeTimers()
     let renderCount = 0
-    const { result } = renderHook(() => {
-      renderCount++
-      return useOrderBook()
-    }, { wrapper: makeWrapper() })
+    const { result } = renderHook(
+      () => {
+        renderCount++
+        return useOrderBook()
+      },
+      { wrapper: makeWrapper() }
+    )
 
     act(() => {
       fakeClient.emit(snapshot(1, [['100', '5']], [['200', '3']]))
@@ -186,13 +204,13 @@ describe('useOrderBook', () => {
     })
     const renderCountAfterSnapshot = renderCount
 
-    // 在 throttle 窗口内连发 3 条 delta
+    // 同一帧内连发 3 条 delta
     act(() => {
       fakeClient.emit(delta(2, 1, [['100', '6']], []))
       fakeClient.emit(delta(3, 2, [['100', '7']], []))
       fakeClient.emit(delta(4, 3, [['100', '8']], []))
     })
-    // throttle 未到不应触发额外 render
+    // RAF 未触发前不应有额外 render
     expect(renderCount).toBe(renderCountAfterSnapshot)
 
     await act(async () => {
@@ -207,17 +225,23 @@ describe('useOrderBook', () => {
 
   it('tickSize change re-aggregates without populating prev', async () => {
     vi.useFakeTimers()
-    const { result, rerender } = renderHook(
-      ({ tick }: { tick: 0.1 | 1 }) => useOrderBook(tick),
-      { wrapper: makeWrapper(), initialProps: { tick: 0.1 as 0.1 | 1 } }
-    )
+    const { result, rerender } = renderHook(({ tick }: { tick: 0.1 | 1 }) => useOrderBook(tick), {
+      wrapper: makeWrapper(),
+      initialProps: { tick: 0.1 as 0.1 | 1 },
+    })
 
     act(() => {
-      fakeClient.emit(snapshot(
-        1,
-        [['100.3', '1'], ['100.5', '2'], ['101.0', '3']],
-        [['200', '1']]
-      ))
+      fakeClient.emit(
+        snapshot(
+          1,
+          [
+            ['100.3', '1'],
+            ['100.5', '2'],
+            ['101.0', '3'],
+          ],
+          [['200', '1']]
+        )
+      )
     })
     await act(async () => {
       await vi.advanceTimersByTimeAsync(200)

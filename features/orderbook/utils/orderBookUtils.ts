@@ -1,3 +1,4 @@
+import Decimal from 'decimal.js'
 import { Quote, Side, SIDE } from '../types'
 import { MAX_VISIBLE_QUOTES } from '../constants'
 
@@ -17,15 +18,15 @@ export function aggregateByTick(
 ): Map<number, number> {
   if (!(tickSize > 0)) return book
   const result = new Map<number, number>()
+  const tick = new Decimal(tickSize)
   for (const [price, size] of book) {
-    // 浮点除法会产生噪声（如 73540.7/0.1 = 735406.9999999999），
-    // 若直接 floor/ceil 会把整 tick 价格错配到相邻桶。先把 factor 校正回整数。
-    const factor = Math.round((price / tickSize) * 1e8) / 1e8
-    const bucketRaw =
-      side === SIDE.BUY ? Math.floor(factor) * tickSize : Math.ceil(factor) * tickSize
-    // 浮点累计误差校正：tick 通常为 0.1/0.5/1/5，1e8 精度足够覆盖
-    const key = Math.round(bucketRaw * 1e8) / 1e8
-    result.set(key, (result.get(key) ?? 0) + size)
+    // 用 Decimal 做分桶，避免浮点除法噪声（如 73540.7/0.1=735406.9999999999）
+    // 把整 tick 价格错配到相邻桶
+    const factor = new Decimal(price).div(tick)
+    const bucket = side === SIDE.BUY ? factor.floor() : factor.ceil()
+    const key = bucket.mul(tick).toNumber()
+    const prev = result.get(key)
+    result.set(key, prev === undefined ? size : new Decimal(prev).plus(size).toNumber())
   }
   return result
 }
@@ -98,19 +99,20 @@ export function computeQuotes(book: Map<number, number>, side: Side, tickSize = 
     totalPercent: 0,
   }))
 
-  let runningTotal = 0
+  // 用 Decimal 累加 size，避免 0.01395+0.0230 之类的浮点误差
+  let runningTotal = new Decimal(0)
 
   if (side === SIDE.BUY) {
     // 买盘：从 index 0（最高买价）向下累加，末尾 total 最大
     for (const q of result) {
-      runningTotal += q.size
-      q.total = runningTotal
+      runningTotal = runningTotal.plus(q.size)
+      q.total = runningTotal.toNumber()
     }
   } else {
     // 卖盘：从 index length-1（最低卖价）向上累加，首位 total 最大
     for (let i = result.length - 1; i >= 0; i--) {
-      runningTotal += result[i].size
-      result[i].total = runningTotal
+      runningTotal = runningTotal.plus(result[i].size)
+      result[i].total = runningTotal.toNumber()
     }
   }
 
