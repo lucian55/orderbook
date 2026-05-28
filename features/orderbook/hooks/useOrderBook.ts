@@ -12,8 +12,6 @@ const RESUBSCRIBE_COOLDOWN = 5_000 // 两次完整重连之间的最小间隔，
 const MSG_TIMEOUT_MS = 30_000 // 超过 30s 没有收到消息认为 WS 已超时
 const CHECK_INTERVAL_MS = 10_000 // 每 10s 检查一次消息时间戳
 const FALLBACK_INTERVAL_MS = 3_000 // WS 超时后 REST 轮询间隔
-const FLUSH_THROTTLE_MS = 150 // 合并高频 delta 更新，150ms 内只触发一次 render；
-// 略大于 FLASH_DURATION（100ms），确保动画有足够时间完成
 const STALE_MSG_MS = 10_000 // 切回前台/网络恢复时，超过此时长无盘口消息才主动重连
 
 // React Query 缓存 key，集中定义避免拼写错误
@@ -51,7 +49,7 @@ export function useOrderBook(tickSize: TickSize = DEFAULT_TICK_SIZE): UseOrderBo
   const awaitingSnapshotRef = useRef<boolean>(false) // 断层恢复中：等待新 snapshot 期间丢弃所有 delta
   const lastMsgTimeRef = useRef<number>(0) // 最后一次收到消息的时间，用于超时检测
   const lastResubscribeTimeRef = useRef<number>(0) // 上次主动重订阅的时间，用于冷却控制
-  const timerRef = useRef<number | null>(null) // flush 节流定时器
+  const rafRef = useRef<number | null>(null) // flush RAF id
   const wsStatusRef = useRef<WsHealthStatus>(WS_STATUS.CONNECTING) // wsStatus 的 ref 镜像，供非 render 上下文读取
 
   const [prevBids, setPrevBids] = useState<Quote[]>([])
@@ -96,16 +94,12 @@ export function useOrderBook(tickSize: TickSize = DEFAULT_TICK_SIZE): UseOrderBo
     if (clearLoading) setIsLoading(false)
   }, [])
 
-  /**
-   * 节流版 flushToState：500ms 内多次 delta 只触发一次 render，
-   * 保证动画有足够时间完成。
-   */
   const scheduleFlush = useCallback(() => {
-    if (timerRef.current !== null) return
-    timerRef.current = window.setTimeout(() => {
-      timerRef.current = null
+    if (rafRef.current !== null) return
+    rafRef.current = requestAnimationFrame(() => {
+      rafRef.current = null
       flushToState()
-    }, FLUSH_THROTTLE_MS) as unknown as number
+    })
   }, [flushToState])
 
   /**
@@ -171,9 +165,9 @@ export function useOrderBook(tickSize: TickSize = DEFAULT_TICK_SIZE): UseOrderBo
     const unsub = client.subscribe(handleMessage)
     return () => {
       unsub()
-      if (timerRef.current !== null) {
-        clearTimeout(timerRef.current)
-        timerRef.current = null
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current)
+        rafRef.current = null
       }
     }
   }, [client, flushToState, safeResubscribe, scheduleFlush])
