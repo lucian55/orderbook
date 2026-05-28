@@ -1,7 +1,7 @@
 'use client'
 
-import { memo, useDeferredValue, useEffect } from 'react'
-import { useAnimationQueue } from '@/shared/hooks/useAnimationQueue'
+import { memo, useEffect } from 'react'
+import { useFlashMap, type FlashColor } from '@/shared/hooks/useFlashMap'
 import { formatWithCommas, formatPrice, tickDecimals } from '@/shared/utils/formatNumber'
 import { Quote, Side, SIDE } from '../types'
 import { MAX_VISIBLE_QUOTES, DEFAULT_TICK_SIZE, type TickSize } from '../constants'
@@ -15,20 +15,19 @@ interface Props {
   tickSize?: TickSize
 }
 
+const flashClass = (color: FlashColor | undefined) =>
+  color === 'green' ? 'animate-flash-green' : color === 'red' ? 'animate-flash-red' : ''
+
 function SideList({ quotes, prevQuotes, side, tickSize = DEFAULT_TICK_SIZE }: Props) {
   const isBuy = side === SIDE.BUY
   const priceDecimals = tickDecimals(tickSize)
 
-  // prevQuotes 仅用于动画对比，是非紧急的派生计算。
-  // 用 useDeferredValue 把它降为低优先级渲染，让主路径（价格显示）先呈现，
-  // 在更新风暴期间动画判断会自动跳过中间帧，减少卡顿。
-  const deferredPrev = useDeferredValue(prevQuotes)
-
   // 买盘取前 8（最高价优先），卖盘取后 8（最低价在末尾，紧靠 LastPrice）
   const visible = isBuy ? quotes.slice(0, MAX_VISIBLE_QUOTES) : quotes.slice(-MAX_VISIBLE_QUOTES)
+  // prevQuotes 与 quotes 在同一次 flush 中成对更新（同一渲染批次），直接对比即是"上一帧"。
   const prevVisible = isBuy
-    ? deferredPrev.slice(0, MAX_VISIBLE_QUOTES)
-    : deferredPrev.slice(-MAX_VISIBLE_QUOTES)
+    ? prevQuotes.slice(0, MAX_VISIBLE_QUOTES)
+    : prevQuotes.slice(-MAX_VISIBLE_QUOTES)
 
   // 仅对比可见区域的前一帧，避免将"从第 9 位升入 top 8"误判为新价格
   const prevSet = new Set(prevVisible.map(q => q.price))
@@ -36,15 +35,30 @@ function SideList({ quotes, prevQuotes, side, tickSize = DEFAULT_TICK_SIZE }: Pr
 
   const barColor = isBuy ? 'bg-[rgba(16,186,104,0.12)]' : 'bg-[rgba(255,90,90,0.12)]'
   const priceColor = isBuy ? 'text-[#00b15d]' : 'text-[#FF5B5A]'
-  const flashClass = isBuy ? 'animate-flash-green' : 'animate-flash-red'
+  // 新档位用本侧主色；数量变化按增减判定方向色
+  const newRowColor: FlashColor = isBuy ? 'green' : 'red'
 
-  const { flashSet, enqueue } = useAnimationQueue()
+  // 两类闪烁目标不同：新档位闪整行，数量变化只闪 size 单元格，各用一套时间驱动的 map
+  const { flashMap: rowFlashMap, flash: flashRows } = useFlashMap()
+  const { flashMap: sizeFlashMap, flash: flashSizes } = useFlashMap()
 
-  // quotes 变化时检测新进入可见区的价格并入队
+  // quotes 变化时：检测新进入可见区的价格 + 已存在档位的数量变化，分别入场
   useEffect(() => {
     if (prevSet.size === 0) return // prevSet 为空说明是 snapshot，不触发动画
-    const newPrices = visible.filter(q => !prevSet.has(q.price)).map(q => q.price)
-    enqueue(newPrices)
+    const newRows: Array<[number, FlashColor]> = []
+    const sizeChanges: Array<[number, FlashColor]> = []
+    for (const q of visible) {
+      if (!prevSet.has(q.price)) {
+        newRows.push([q.price, newRowColor])
+      } else {
+        const prevSize = prevMap.get(q.price)
+        if (prevSize !== undefined && prevSize !== q.size) {
+          sizeChanges.push([q.price, q.size > prevSize ? 'green' : 'red'])
+        }
+      }
+    }
+    flashRows(newRows)
+    flashSizes(sizeChanges)
   }, [quotes]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
@@ -54,15 +68,8 @@ function SideList({ quotes, prevQuotes, side, tickSize = DEFAULT_TICK_SIZE }: Pr
       aria-label={isBuy ? 'Bids' : 'Asks'}
     >
       {visible.map(quote => {
-        const rowFlash = flashSet.has(quote.price) ? flashClass : ''
-
-        const prevSize = prevMap.get(quote.price)
-        const sizeChanged = prevSize !== undefined && prevSize !== quote.size
-        const sizeFlash = sizeChanged
-          ? quote.size > prevSize
-            ? 'animate-flash-green'
-            : 'animate-flash-red'
-          : ''
+        const rowFlash = flashClass(rowFlashMap.get(quote.price))
+        const sizeFlash = flashClass(sizeFlashMap.get(quote.price))
 
         return (
           <li
@@ -79,6 +86,7 @@ function SideList({ quotes, prevQuotes, side, tickSize = DEFAULT_TICK_SIZE }: Pr
               {formatPrice(quote.price, priceDecimals)}
             </span>
             <span
+              // size 变化时 key 改变 → 重挂载，强制 CSS 动画从头播放（同色连续变化也能重新触发）
               key={`${quote.price}_${quote.size}`}
               className={`w-24 text-right pr-2 text-sm relative z-10 text-[#F0F4F8] ${sizeFlash}`}
             >

@@ -75,6 +75,21 @@ export function applyDelta(
 }
 
 /**
+ * 合约盘口的 size 原始单位是 USD（合约名义价值），按 BTC 数量 = size / price 转换。
+ * 必须在聚合 / 累计 total 之前转换，使 total 也以 BTC 累加（不同价位的 USD 不能直接相加再换算）。
+ * price <= 0 或 size <= 0 的异常档位直接丢弃。
+ */
+export function usdToBtcBook(book: Map<number, number>): Map<number, number> {
+  const result = new Map<number, number>()
+  for (const [price, size] of book) {
+    if (price > 0 && size > 0) {
+      result.set(price, new Decimal(size).div(price).toNumber())
+    }
+  }
+  return result
+}
+
+/**
  * 将原始 Map 转换为带累计 total 和百分比 totalPercent 的 Quote 数组。
  * 结果始终按价格降序排列（index 0 = 最高价）。
  *

@@ -1,10 +1,10 @@
 'use client'
 
-import Decimal from 'decimal.js'
-import { startTransition, useEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useDocumentTitle } from '@/shared/hooks/useDocumentTitle'
 import { formatPrice } from '@/shared/utils/formatNumber'
 import { useOrderBook } from '../hooks/useOrderBook'
+import { useLastPrice } from '../hooks/useLastPrice'
 import { SIDE, WS_STATUS } from '../types'
 import Header from './Header'
 import SideList from './SideList'
@@ -26,32 +26,33 @@ export default function OrderBook() {
 function OrderBookInner() {
   const [tickSize, setTickSize] = useState<TickSize>(DEFAULT_TICK_SIZE)
   const { bids, asks, prevBids, prevAsks, isLoading, wsStatus } = useOrderBook(tickSize)
-
-  // 无独立成交价 WS，从买一/卖一计算中间价
-  // bids 降序 → bids[0] 最优买价；asks 降序 → asks[asks.length-1] 最优卖价
-  const midPrice =
-    bids.length > 0 && asks.length > 0
-      ? new Decimal(bids[0].price)
-          .plus(asks[asks.length - 1].price)
-          .div(2)
-          .toNumber()
-      : null
-
-  const [prevMidPrice, setPrevMidPrice] = useState<number | null>(null)
-  useEffect(() => {
-    startTransition(() => setPrevMidPrice(midPrice))
-  }, [midPrice])
+  // 成交价来自独立的合约 tradeHistory WS（取数组第一个价），见需求文档。
+  // useLastPrice 内部仅在价格真正变动时更新 prevLastPrice，涨跌色因此能稳定保持。
+  const { lastPrice, prevLastPrice } = useLastPrice()
 
   const arrow =
-    midPrice !== null && prevMidPrice !== null
-      ? midPrice > prevMidPrice
+    lastPrice !== null && prevLastPrice !== null
+      ? lastPrice > prevLastPrice
         ? '↑ '
-        : midPrice < prevMidPrice
+        : lastPrice < prevLastPrice
           ? '↓ '
           : ''
       : ''
-  const title = midPrice !== null ? `${arrow}${formatPrice(midPrice)} BTC-USDT` : 'OrderBook'
-  useDocumentTitle(title)
+
+  // tab 标题每秒最多更新一次：成交价高频变动，直接同步会让标题栏闪烁
+  const title = lastPrice !== null ? `${arrow}${formatPrice(lastPrice)} BTCPFC` : 'OrderBook'
+  const titleRef = useRef(title)
+  useLayoutEffect(() => {
+    titleRef.current = title
+  }, [title])
+  const [throttledTitle, setThrottledTitle] = useState(title)
+  useEffect(() => {
+    const id = setInterval(() => {
+      setThrottledTitle(t => (t === titleRef.current ? t : titleRef.current))
+    }, 1000)
+    return () => clearInterval(id)
+  }, [])
+  useDocumentTitle(throttledTitle)
 
   // 有历史数据时不显示错误态（REST 兜底已接管），无数据时才显示
   const isError =
@@ -89,7 +90,7 @@ function OrderBookInner() {
         <>
           <Header />
           <SideList quotes={asks} prevQuotes={prevAsks} side={SIDE.SELL} tickSize={tickSize} />
-          <LastPrice lastPrice={midPrice} prevLastPrice={prevMidPrice} />
+          <LastPrice lastPrice={lastPrice} prevLastPrice={prevLastPrice} />
           <SideList quotes={bids} prevQuotes={prevBids} side={SIDE.BUY} tickSize={tickSize} />
         </>
       )}

@@ -1,4 +1,4 @@
-// 相对路径，由 next.config.ts 的 rewrites 代理到 https://api.btse.com/spot/api/v3.2
+// 相对路径，由 next.config.ts 的 rewrites 代理到 https://api.btse.com/futures/api/v2.1
 // 绕开 BTSE 对浏览器直连的 403（CORS / Cloudflare 拦截）
 const BASE = '/btse-api'
 
@@ -9,11 +9,11 @@ export interface RestOrderBookSnapshot {
 }
 
 /**
- * 获取 BTC-USDT 盘口快照（50 档），用于 WS 超时时的 REST 兜底。
+ * 获取 BTCPFC 盘口快照（50 档），用于 WS 超时时的 REST 兜底。
  * 返回格式统一为 { buyQuote, sellQuote }。
  */
 export async function fetchOrderBook(): Promise<RestOrderBookSnapshot> {
-  const res = await fetch(`${BASE}/orderbook?symbol=BTC-USDT&depth=50`, {
+  const res = await fetch(`${BASE}/orderbook?symbol=BTCPFC&depth=50`, {
     cache: 'no-store',
   })
   if (!res.ok) throw new Error(`OrderBook fetch failed: ${res.status}`)
@@ -27,10 +27,10 @@ export async function fetchOrderBook(): Promise<RestOrderBookSnapshot> {
 }
 
 /**
- * 获取 BTC-USDT 最新成交价，用于 lastPrice WS 超时时的 REST 兜底。
+ * 获取 BTCPFC 最新成交价，用于 lastPrice WS 超时时的 REST 兜底。
  */
 export async function fetchLastPrice(): Promise<number> {
-  const res = await fetch(`${BASE}/price?symbol=BTC-USDT`, {
+  const res = await fetch(`${BASE}/price?symbol=BTCPFC`, {
     cache: 'no-store',
   })
   if (!res.ok) throw new Error(`LastPrice fetch failed: ${res.status}`)

@@ -3,6 +3,7 @@ import {
   applyDelta,
   aggregateByTick,
   computeQuotes,
+  usdToBtcBook,
   visibleQuotesEqual,
 } from '@/features/orderbook/utils/orderBookUtils'
 import { SIDE } from '@/features/orderbook/types'
@@ -65,6 +66,38 @@ describe('applyDelta', () => {
     expect(result.has(100)).toBe(false)
     expect(result.get(200)).toBe(30)
     expect(result.get(300)).toBe(5)
+  })
+})
+
+// ─── usdToBtcBook ────────────────────────────────────────────────────────────
+
+describe('usdToBtcBook', () => {
+  it('converts USD notional size to BTC amount (size / price)', () => {
+    const book = new Map([
+      [100, 10], // 10 USD / 100 = 0.1 BTC
+      [200, 50], // 50 USD / 200 = 0.25 BTC
+    ])
+    const result = usdToBtcBook(book)
+    expect(result.get(100)).toBeCloseTo(0.1)
+    expect(result.get(200)).toBeCloseTo(0.25)
+  })
+
+  it('drops entries with non-positive price or size', () => {
+    const book = new Map([
+      [0, 10],
+      [100, 0],
+      [-5, 3],
+      [200, 4],
+    ])
+    const result = usdToBtcBook(book)
+    expect(result.size).toBe(1)
+    expect(result.get(200)).toBeCloseTo(0.02)
+  })
+
+  it('does not mutate the original map', () => {
+    const book = new Map([[100, 10]])
+    usdToBtcBook(book)
+    expect(book.get(100)).toBe(10)
   })
 })
 

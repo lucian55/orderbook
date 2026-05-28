@@ -106,8 +106,9 @@ describe('useOrderBook', () => {
       expect(result.current.isLoading).toBe(false)
     })
     expect(result.current.bids).toHaveLength(1)
-    expect(result.current.bids[0]).toMatchObject({ price: 100, size: 5 })
-    expect(result.current.asks[0]).toMatchObject({ price: 200, size: 3 })
+    // size 由 USD 名义价值换算为 BTC = size / price：5/100=0.05，3/200=0.015
+    expect(result.current.bids[0]).toMatchObject({ price: 100, size: 0.05 })
+    expect(result.current.asks[0]).toMatchObject({ price: 200, size: 0.015 })
   })
 
   it('snapshot does not populate prev (avoids initial flash storm)', async () => {
@@ -137,7 +138,8 @@ describe('useOrderBook', () => {
       await vi.advanceTimersByTimeAsync(200)
     })
 
-    expect(result.current.bids[0]).toMatchObject({ price: 100, size: 10 })
+    // size BTC = 10/100 = 0.1
+    expect(result.current.bids[0]).toMatchObject({ price: 100, size: 0.1 })
   })
 
   it('seqNum mismatch triggers resubscribe (no state change)', async () => {
@@ -219,8 +221,8 @@ describe('useOrderBook', () => {
 
     // 只产生一次 flush
     expect(renderCount).toBeLessThanOrEqual(renderCountAfterSnapshot + 1)
-    // 最终值为最后一次 delta 的结果
-    expect(result.current.bids[0].size).toBe(8)
+    // 最终值为最后一次 delta 的结果，size BTC = 8/100 = 0.08
+    expect(result.current.bids[0].size).toBe(0.08)
   })
 
   it('tickSize change re-aggregates without populating prev', async () => {
@@ -255,9 +257,12 @@ describe('useOrderBook', () => {
     })
 
     // 100.3 / 100.5 合并到 100；101 独立
+    // size 先换算为 BTC 再按桶累加：101→3/101；100→1/100.3+2/100.5
     expect(result.current.bids).toHaveLength(2)
-    expect(result.current.bids[0]).toMatchObject({ price: 101, size: 3 })
-    expect(result.current.bids[1]).toMatchObject({ price: 100, size: 3 })
+    expect(result.current.bids[0].price).toBe(101)
+    expect(result.current.bids[0].size).toBeCloseTo(3 / 101)
+    expect(result.current.bids[1].price).toBe(100)
+    expect(result.current.bids[1].size).toBeCloseTo(1 / 100.3 + 2 / 100.5)
     // 聚合切换不应填充 prev（不触发动画）
     expect(result.current.prevBids).toEqual([])
   })

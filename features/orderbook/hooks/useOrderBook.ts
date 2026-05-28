@@ -4,7 +4,12 @@ import { startTransition, useCallback, useEffect, useLayoutEffect, useRef, useSt
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { fetchOrderBook } from '@/api/btse'
 import { getBtseOrderBookClient } from '../websocket/BtseOrderBookClient'
-import { applyDelta, computeQuotes, visibleQuotesEqual } from '../utils/orderBookUtils'
+import {
+  applyDelta,
+  computeQuotes,
+  usdToBtcBook,
+  visibleQuotesEqual,
+} from '../utils/orderBookUtils'
 import { OrderBookMessage, Quote, WsHealthStatus, WS_STATUS, MSG_TYPE } from '../types'
 import { DEFAULT_TICK_SIZE, type TickSize } from '../constants'
 
@@ -66,8 +71,9 @@ export function useOrderBook(tickSize: TickSize = DEFAULT_TICK_SIZE): UseOrderBo
    */
   const flushToState = useCallback((fromSnapshot = false, clearLoading = false) => {
     const tick = tickSizeRef.current
-    const newBids = computeQuotes(bidsMapRef.current, 'buy', tick)
-    const newAsks = computeQuotes(asksMapRef.current, 'sell', tick)
+    // size 原始单位为 USD（合约名义价值），先换算成 BTC 再聚合 / 累计 total
+    const newBids = computeQuotes(usdToBtcBook(bidsMapRef.current), 'buy', tick)
+    const newAsks = computeQuotes(usdToBtcBook(asksMapRef.current), 'sell', tick)
 
     const bidsChanged = !visibleQuotesEqual(bidsStateRef.current, newBids, 'buy')
     const asksChanged = !visibleQuotesEqual(asksStateRef.current, newAsks, 'sell')
