@@ -1,0 +1,43 @@
+@import "tailwindcss";
+
+@theme {
+  --animate-flash-green: flash-green 0.1s ease-out forwards;
+  --animate-flash-red:   flash-red   0.1s ease-out forwards;
+}
+
+@keyframes flash-green {
+  from { background-color: rgba(0, 177, 93, 0.5); }
+  to   { background-color: transparent; }
+}
+
+@keyframes flash-red {
+  from { background-color: rgba(255, 91, 90, 0.5); }
+  to   { background-color: transparent; }
+}
+
+/* 直接定义，不依赖 Tailwind 扫描 */
+.animate-flash-green {
+  animation: flash-green 0.1s ease-out forwards;
+}
+
+.animate-flash-red {
+  animation: flash-red 0.1s ease-out forwards;
+}
+
+/* 尊重系统的"减少动态效果"偏好：关闭高频闪烁动画，数据更新照常进行 */
+@media (prefers-reduced-motion: reduce) {
+  .animate-flash-green,
+  .animate-flash-red {
+    animation: none;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  background: #131B29;
+  color: #F0F4F8;
+  font-family: Arial, Helvetica, sans-serif;
+}
